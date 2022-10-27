@@ -15,6 +15,7 @@ Section ExtendedCoordinates.
           {Feq_dec:DecidableRel Feq}.
   Local Infix "=" := Feq : type_scope. Local Notation "a <> b" := (not (a = b)) : type_scope.
   Local Notation "0" := Fzero.  Local Notation "1" := Fone.
+  Local Notation "2" := (Fadd Fone Fone).
   Local Infix "+" := Fadd. Local Infix "*" := Fmul.
   Local Infix "-" := Fsub. Local Infix "/" := Fdiv.
   Local Notation "x ^ 2" := (x*x).
@@ -128,5 +129,36 @@ Section ExtendedCoordinates.
                        unique pose proof (E.denominator_nonzero _ nonzero_a square_a _ nonsquare_d _ _  (proj2_sig P)  _ _  (proj2_sig Q)) end;
               t).
     Qed.
+
+    (* https://www.hyperelliptic.org/EFD/g1p/auto-twisted-extended-1.html#doubling-dbl-2008-hwcd *)
+    Program Definition m1double (P: point) : point :=
+        match coordinates P return F*F*F*F with
+        (X1, Y1, Z1, T1) =>
+        let A := X1^2 in
+        let B := Y1^2 in
+        let C := 2*Z1^2 in
+        let D := a*A in
+        let E := (X1+Y1)^2-A-B in
+        let G := D+B in
+        let F := G-C in
+        let H := D-B in
+        let X3 := E*F in
+        let Y3 := G*H in
+        let T3 := E*H in
+        let Z3 := F*G in
+        (X3, Y3, Z3, T3)
+      end.
+    Next Obligation.
+      match goal with
+      | [ |- match (let (_, _) := coordinates ?P1 in let (_, _) := _ in let (_, _) := _ in _) with _ => _ end ]
+        => pose proof (E.denominator_nonzero _ nonzero_a square_a _ nonsquare_d _ _ (proj2_sig (to_twisted P1))  _ _  (proj2_sig (to_twisted P1)))
+      end; t.
+    Qed.
+
+    Lemma m1double_m1add: forall (P: point), eq (m1double P) (m1add P P).
+    Proof.
+      intro; unfold eq, m1add, m1double; t.
+    Qed.
+
   End TwistMinusOne.
 End ExtendedCoordinates.
