@@ -4,11 +4,19 @@ Require Import Lia.
 Require Import Coq.Sorting.Permutation.
 Require Import Crypto.Algebra.Hierarchy.
 Require Import Crypto.Algebra.ScalarMult.
+Require Import Crypto.Util.Decidable.
+Require Import Coq.Classes.Morphisms.
 Import ListNotations.
 
 Local Open Scope Z_scope.
 
 Section FoldLemmas.
+
+  Lemma app_cons: forall [A : Type] (l : list A) (a : A),
+    a :: l = [a] ++ l.
+  Proof.
+    simpl. reflexivity.
+  Qed. 
 
   Lemma fold_right_val_closed: forall (T : Type) (V: Type)
     (fT: T -> T -> T) (val: T -> Prop),
@@ -71,12 +79,6 @@ Section FoldLemmas.
     - simpl. rewrite IHl. rewrite H. trivial.
   Qed.
 
-  Lemma app_cons: forall [A : Type] (l : list A) (a : A),
-      a :: l = [a] ++ l.
-  Proof.
-    simpl. reflexivity.
-  Qed.
-
   Lemma fold_right_flat_map: forall (T U : Type) (f: T -> list U) (l : list T),
     fold_right (@List.app _ ) [] (map f l) = flat_map f l.
   Proof.
@@ -91,6 +93,79 @@ Section FoldLemmas.
       simpl.
       rewrite app_nil_r.
       trivial.
+  Qed.
+
+  Lemma fold_right_map_cond_eq: forall (T U V : Type)
+    (fT: T -> T -> T) (fU: U -> U -> U) (TtoU: T -> U) 
+    (eqU: U -> U -> Prop) (val: T -> Prop),
+    (RelationClasses.Equivalence eqU) ->
+    (Proper (eqU ==> eqU ==> eqU) fU) ->
+    (forall x y : T, val x -> val y -> eqU (fU (TtoU x) (TtoU y)) (TtoU (fT x y))) ->
+    (forall x y : T, val x -> val y -> val (fT x y)) ->
+    forall (f : V -> T) l t u,
+      eqU (TtoU t) u ->
+      val t ->
+      List.Forall (fun v : V => val (f v)) l ->
+      eqU (fold_right fU u (map (fun x : V => TtoU (f x)) l))
+          (TtoU (fold_right fT t (map f l))).
+  Proof.
+    intros.
+    induction l.
+    - simpl; symmetry; trivial. 
+    - simpl. rewrite IHl. rewrite H1.
+      + reflexivity.
+      + inversion H5. assumption.
+      + apply fold_right_val_closed; try assumption.
+        inversion H5. assumption.
+      + inversion H5. assumption.
+  Qed.
+
+  Lemma fold_right_map_eq: forall (T U V : Type)
+    (fT: T -> T -> T) (fU: U -> U -> U) (TtoU: T -> U)
+    (eqU: U -> U -> Prop),
+    (RelationClasses.Equivalence eqU) ->
+    (Proper (eqU ==> eqU ==> eqU) fU) ->
+    (forall x y : T, eqU (fU (TtoU x) (TtoU y)) (TtoU (fT x y))) ->
+    forall (f : V -> T) l t u,
+      eqU (TtoU t) u ->
+      eqU (fold_right fU u (map (fun x : V => TtoU (f x)) l))
+          (TtoU (fold_right fT t (map f l))).
+  Proof.
+    intros.
+    induction l.
+    - simpl. symmetry. auto.
+    - simpl. rewrite IHl. rewrite H1. reflexivity.
+  Qed.
+
+  Lemma fold_right_map'_eq: forall (U U' V: Type)
+    (fU: U -> U -> U) (fU': U' -> U -> U) (UtoU': U -> U')
+    (eqU: U -> U -> Prop),
+    (RelationClasses.Equivalence eqU) ->
+    (Proper (eqU ==> eqU ==> eqU) fU) ->
+    (forall x y : U, eqU (fU x y) (fU' (UtoU' x) y)) ->
+    forall (f : V -> U) l u,
+      eqU (fold_right fU u (map f l))
+          (fold_right fU' u (map (fun x : V => UtoU' (f x)) l)).
+  Proof.
+    intros.
+    induction l.
+    - simpl. symmetry. reflexivity.
+    - simpl. rewrite IHl. rewrite H1. reflexivity.
+  Qed.
+
+  Lemma fold_right_eq': forall (U U' V: Type)
+    (fU': U' -> U -> U) (eqU: U -> U -> Prop) (eqU': U' -> U' -> Prop),
+    (RelationClasses.Equivalence eqU) ->
+    (RelationClasses.Equivalence eqU') ->
+    (Proper (eqU' ==> eqU ==> eqU) fU') ->
+    forall (f f' : V -> U') l u,
+      List.Forall (fun v : V => eqU' (f v) (f' v)) l ->
+      eqU (fold_right fU' u (map f l)) (fold_right fU' u (map f' l)).
+  Proof.
+    intros.
+    induction l.
+    - simpl. reflexivity.
+    - simpl. inversion H2. rewrite H5. rewrite IHl; [reflexivity | assumption].
   Qed.
 
 End FoldLemmas.
@@ -673,20 +748,34 @@ Section TableMult.
   End Multicomb.
 
   Context (P : Type)
-          (addP : P -> P -> P)
+          (eqP : P -> P -> Prop)
+          (Equivalence_eqP : RelationClasses.Equivalence eqP).
+
+  Declare Scope eq_scope.
+  Local Infix "=" := Logic.eq : eq_scope.
+  Delimit Scope eq_scope with eq.
+
+  Declare Scope P_scope.
+  Local Infix "=" := eqP : P_scope.
+  Delimit Scope P_scope with P.
+  Bind Scope P_scope with P.
+
+  Context (addP : P -> P -> P)
           (doubleP : P -> P)
           (negP : P -> P)
           (O : P) (* zero element *)
-          (groupP : @Algebra.Hierarchy.group P Logic.eq addP O negP)
-          (doubleP_addP : forall Q, doubleP Q = addP Q Q).
+          (groupP : @Algebra.Hierarchy.group P eqP addP O negP)
+          (doubleP_addP : forall Q, (doubleP Q = addP Q Q)%P).
 
   Section GroupRelations.
+
+    Local Infix "=" := eqP : type_scope. 
 
     (* TODO use repeated squaring when generating table *)
     Definition mulP := @scalarmult_ref P addP O negP.
       
     Lemma mulP_zero : forall Q, mulP 0 Q = O.
-    Proof. auto. Qed.
+    Proof. intro. unfold mulP. simpl. reflexivity. Qed.
 
     Lemma mulP_one : forall Q, mulP 1 Q = Q.
     Proof. apply scalarmult_1_l. Qed.
@@ -707,6 +796,21 @@ Section TableMult.
       intros; symmetry; rewrite Z.mul_comm; apply scalarmult_assoc.
     Qed.
 
+    Lemma Proper_mulP : Proper (Logic.eq ==> eqP ==> eqP) mulP.
+    Proof. apply Proper_scalarmult_ref. Qed.
+
+    Lemma Proper_negP : Proper (eqP ==> eqP) negP.
+    Proof. apply (@group_inv_Proper P eqP addP O negP groupP). Qed.
+
+    Lemma Proper_addP : Proper (eqP ==> eqP ==> eqP) addP.
+    Proof. apply (@monoid_op_Proper P eqP addP O (@group_monoid P eqP addP O negP groupP)). Qed.
+
+    Lemma Proper_addP_doubleP: Proper (eqP ==> eqP ==> eqP) (fun Q R => addP Q (doubleP R)).
+    Proof. cbv. intros. repeat rewrite doubleP_addP. rewrite H, H0. reflexivity. Qed.
+
+    Lemma eq_eqP : forall Q R, Logic.eq Q R -> Q = R.
+    Proof. intros. rewrite H. reflexivity. Qed.
+
   End GroupRelations.
 
   Context (B : P) (* base point *)
@@ -714,8 +818,9 @@ Section TableMult.
           (PtoP' : P -> P')
           (addP' : P' -> P -> P)
           (negP' : P' -> P')
-          (addP'_addP: forall Q R, addP Q R = addP' (PtoP' Q) R)
-          (negP'_negP: forall Q, negP' (PtoP' Q) = PtoP' (negP Q)).
+          (addP'_addP: forall Q R, (addP Q R = addP' (PtoP' Q) R)%P)
+          (addP'_negP'_addP_negP: forall Q R, (addP (negP Q) R = addP' (negP' (PtoP' Q)) R)%P).
+          (*(negP'_negP: forall Q, (negP' (PtoP' Q) = PtoP' (negP Q))%eq).*)
 
   Section Table.
 
@@ -731,27 +836,37 @@ Section TableMult.
     Definition ZtoP (n : Z) : P := mulP n B.
 
     (* To be replaced by looking up in an actual precomputed table *)
-    Definition table_entry (bnum: Z) (d: Z) : P'
-      := PtoP' (List.fold_right addP O
+    Definition table_entry (bnum: Z) (d: Z) : P
+      := List.fold_right addP O
       (List.map
         (fun x => ZtoP ((2 * (Z.b2z (Z.testbit d (x - t * bnum))) - 1) * 2 ^ (s * x)))
-        (Zseq (t * bnum) t))).
+        (Zseq (t * bnum) t)).
 
-    Definition table_entry' (bnum: Z) (d: Z) : P'
-      := PtoP' (List.fold_right addP O
+    Definition table_entry' (bnum: Z) (d: Z) : P
+      := List.fold_right addP O
       (List.map
         (fun x => ZtoP ((2 * (Z.b2z (Z.testbit d (x - t * bnum))) - 1) * 2 ^ (s * x)))
-        (Zseq (t * bnum) t))).
+        (Zseq (t * bnum) t)).
 
     Lemma table_entry_hyp: forall bnum d : Z,
       0 <= d < 2 ^ (t - 1) ->
-      table_entry bnum d = table_entry' bnum d.
+      (table_entry bnum d = table_entry' bnum d)%P.
     Proof. intros. reflexivity. Qed.
 
     Opaque table_entry.
 
-    Definition table_lookup (bnum: Z) (d: Z) : P' 
-      := if Z.testbit d (t - 1) then negP' (table_entry bnum (2 ^ t - 1 - d)) else table_entry bnum d.
+    Definition table_lookup (bnum: Z) (d: Z) : P
+      := if Z.testbit d (t - 1)
+         then negP (table_entry bnum (2 ^ t - 1 - d))
+         else table_entry bnum d.
+
+    Definition table_entry_precomputed (bnum: Z) (d: Z) : P'
+      := PtoP' (table_entry bnum d).
+
+    Definition table_lookup_precomputed (bnum: Z) (d: Z) : P' 
+      := if Z.testbit d (t - 1)
+         then negP' (table_entry_precomputed bnum (2 ^ t - 1 - d))
+         else table_entry_precomputed bnum d.
 
     (* Definition table := List.map table_entry (Zseq 0 (2 ^ t)). *)
 
@@ -764,7 +879,7 @@ Section TableMult.
 
     Definition table_comb (offset: Z) (e: Z) : P
       := List.fold_right addP' O
-      (List.map (fun x => table_lookup x (extract_bits (offset + x * s * t) e)) (Zseq 0 n)).
+      (List.map (fun x => table_lookup_precomputed x (extract_bits (offset + x * s * t) e)) (Zseq 0 n)).
 
     Definition table_multicomb (e: Z) : P :=
       List.fold_right (fun x y => addP x (doubleP y)) O (List.map (fun x => table_comb x e) (Zseq 0 s)).
@@ -833,7 +948,7 @@ Section TableMult.
           rewrite <- Z.mod_pow2_bits_low with (m := x0) (n := x) by lia.
           rewrite Z.mod_add by nia.
           rewrite Z.mod_small; [ apply H0 | apply bitmap_bound ]; lia.
-    Qed.   
+    Qed. 
 
     Lemma extract_bits_bound: forall offset e,
      0 <= extract_bits offset e < 2 ^ t.
@@ -865,45 +980,44 @@ Section TableMult.
     Qed.
 
     (* -------------------- *)
-    (* fold_right with addP and shiftP *)
-
-    Lemma fold_right_ZtoP: forall fZ fP,
-      (forall x y, fP (ZtoP x) (ZtoP y) = ZtoP (fZ x y)) ->
-      forall f l,
-        fold_right fP O (map (fun x : Z => ZtoP (f x)) l ) = 
-        ZtoP (fold_right fZ 0 (map f l)).
-    Proof.
-      intros. apply fold_right_map. exact H. unfold ZtoP. apply mulP_zero.
-    Qed.
+    (* fold_right with addP and doubleP *)
 
     Lemma fold_right_addP: forall f l,
-      fold_right addP O (map (fun x : Z => ZtoP (f x)) l) =
-      ZtoP (fold_right Z.add 0 (map f l)).
+      (fold_right addP O (map (fun x : Z => ZtoP (f x)) l) =
+      ZtoP (fold_right Z.add 0 (map f l)))%P.
     Proof.
-      apply fold_right_ZtoP. unfold ZtoP. intros. rewrite mulP_addP. trivial.
+      intros. eapply fold_right_map_eq with (T := Z).
+      - assumption.
+      - apply Proper_addP.
+      - intros. unfold ZtoP. symmetry. apply mulP_addP.
+      - apply mulP_zero.
     Qed.
 
-    Lemma fold_right_addP_shiftP: forall f l,
-      fold_right (fun x y : P => addP x (doubleP y)) O (map (fun x : Z => ZtoP (f x)) l) =
-      ZtoP (fold_right (fun x y : Z => Z.add x (Z.double y)) 0 (map f l)).
+    Lemma fold_right_addP_doubleP: forall f l,
+      (fold_right (fun x y : P => addP x (doubleP y)) O (map (fun x : Z => ZtoP (f x)) l) =
+      ZtoP (fold_right (fun x y : Z => Z.add x (Z.double y)) 0 (map f l)))%P.
     Proof.
-      apply fold_right_ZtoP. unfold ZtoP. intros.
-      rewrite mulP_addP. rewrite mulP_doubleP. trivial.
+      intros. eapply fold_right_map_eq with (T := Z).
+      - assumption.
+      - cbv. intros. repeat rewrite doubleP_addP. rewrite H, H0. reflexivity.
+      - intros. unfold ZtoP. rewrite mulP_addP. rewrite mulP_doubleP. reflexivity.
+      - apply mulP_zero.
     Qed.
 
     (* -------------------- *)
-    (* table_lookup *)
+    (* table_lookup_precomputed *)
 
     Lemma table_entry'_spec: forall bnum offset e : Z,
       0 <= bnum < n -> 0 <= offset < s
-        -> table_entry' bnum (extract_bits (offset + bnum * s * t) e) = PtoP' (ZtoP (eval (entry bnum offset) e)).
+        -> (table_entry' bnum (extract_bits (offset + bnum * s * t) e)
+             = ZtoP (eval (entry bnum offset) e))%P.
     Proof.
       intros.
       unfold eval, entry, table_entry'.
+      f_equal.
       rewrite fold_right_addP.
       rewrite map_map.
-      f_equal.
-      f_equal.
+      apply Proper_mulP; [ | reflexivity].
       f_equal.
       apply map_ext_in.
       intros.
@@ -980,40 +1094,36 @@ Section TableMult.
         symmetry.
         apply Z.div_small.
         lia.
-    Qed.      
+    Qed.
+
+    Local Infix "=" := eqP : type_scope.
 
     Lemma table_entry'_flip: forall bnum d : Z,
       0 <= d < 2 ^ t -> 0 <= bnum
-        -> table_entry' bnum (2 ^ t - 1 - d) = negP' (table_entry' bnum d).
+        -> (table_entry' bnum (2 ^ t - 1 - d) = negP (table_entry' bnum d))%P.
     Proof.
       intros.
       unfold table_entry'.
-      assert (rewrite_map:
-        map (fun x : Z => ZtoP ((2 * Z.b2z (Z.testbit (2 ^ t - 1 - d) (x - t * bnum)) - 1) * 2 ^ (s * x)))
-        (Zseq (t * bnum) t) =
-        map (fun x : Z => negP (ZtoP ((2 * Z.b2z (Z.testbit d (x - t * bnum)) - 1) * 2 ^ (s * x))))
-        (Zseq (t * bnum) t)).
-      {
-        apply map_ext_in.
-        intros.
-        rewrite Zseq_bound' in H1 by lia.
-        rewrite b2z_testbit_flip by lia.
-        unfold ZtoP.
-        rewrite <- mulP_negP.
-        f_equal.
-        nia.
-      }
-      rewrite rewrite_map.
-      rewrite negP'_negP.
-      f_equal.
-      eapply fold_right_map_cond with (val := fun P => exists n, ZtoP n = P).
+      erewrite <- fold_right_map_cond_eq with (fT := addP) (fU := addP) (TtoU := negP) (u := O) (eqU := eqP) (val := fun P => exists n, (ZtoP n = P)%P).
+      - apply fold_right_eq' with (eqU' := eqP).
+        + assumption.
+        + assumption.
+        + apply Proper_addP.
+        + apply Forall_forall. intros.
+          unfold ZtoP.
+          repeat rewrite <- mulP_negP.
+          apply Proper_mulP; [ | reflexivity].
+          apply Zseq_bound' in H1; try lia.
+          rewrite b2z_testbit_flip; try lia.
+      - assumption.
+      - apply Proper_addP.
       - intros. destruct H1. destruct H2.
         rewrite <- H1, <- H2.
         unfold ZtoP.
-        repeat rewrite <- mulP_negP.
         repeat rewrite <- mulP_addP.
-        rewrite <-  mulP_negP.
-        f_equal; lia.
+        repeat rewrite <- mulP_negP.
+        rewrite <- mulP_addP.
+        apply Proper_mulP; [lia | reflexivity].
       - intros. destruct H1. destruct H2.
         exists (x0 + x1).
         rewrite <- H1, <- H2.
@@ -1021,14 +1131,15 @@ Section TableMult.
         apply mulP_addP.
       - rewrite <- mulP_zero with (Q := B).
         rewrite <- mulP_negP.
-        f_equal.
-      - exists 0. trivial.
-      - rewrite Forall_forall; eauto.
+        apply Proper_mulP; [lia | reflexivity].
+      - exists 0. apply mulP_zero.
+      - rewrite Forall_forall. intros. eexists.
+        apply Proper_mulP; [eauto | reflexivity].
     Qed.
 
     Lemma table_lookup_spec: forall bnum offset e : Z,
       0 <= bnum < n -> 0 <= offset < s
-        -> table_lookup bnum (extract_bits (offset + bnum * s * t) e) = PtoP' (ZtoP (eval (entry bnum offset) e)).
+        -> table_lookup bnum (extract_bits (offset + bnum * s * t) e) = ZtoP (eval (entry bnum offset) e).
     Proof.
       intros.
       pose proof extract_bits_bound (offset + bnum * s * t) e.
@@ -1042,9 +1153,12 @@ Section TableMult.
         rewrite table_entry_hyp by lia.
         rewrite <- table_entry'_flip.
         + rewrite <- table_entry'_spec by lia.
-          f_equal.
-          replace (2 ^ t) with (2 ^ (t - 1) + 2 ^ (t - 1)) in *;
+          remember (extract_bits (offset + bnum * s * t) e) as bits.
+          assert ((2 ^ t - 1 - (2 ^ (t - 1) + 2 ^ (t - 1) - 1 - bits) = bits)%eq).
+          replace (2 ^ t) with (2 ^ (t - 1) + 2 ^ (t - 1));
             [ lia | replace t with (t - 1 + 1) at 3 by lia; rewrite Z.pow_add_r; nia ].
+          rewrite H4.
+          reflexivity.
         + replace (2 ^ t) with (2 ^ (t - 1) + 2 ^ (t - 1)) in *;
             [ lia | replace t with (t - 1 + 1) at 3 by lia; rewrite Z.pow_add_r; nia ].
         + lia.
@@ -1052,7 +1166,25 @@ Section TableMult.
         rewrite Z.leb_gt in H2.
         rewrite table_entry_hyp by lia.
         apply table_entry'_spec; assumption.
-    Qed. 
+    Qed.
+
+    Lemma table_lookup_precomputed_spec: forall (f : Z -> Z) (l : list Z),
+      List.Forall (fun x => 0 <= x < n) l ->
+      List.Forall (fun x => 0 <= f x < 2 ^ t) l ->
+      fold_right addP' O (map (fun x : Z => table_lookup_precomputed x (f x)) l)
+      = fold_right addP O (map (fun x : Z => table_lookup x (f x)) l).
+    Proof.
+      intros.
+      induction l.
+      - simpl. reflexivity.
+      - simpl. rewrite <- IHl.
+        + remember (fold_right addP' O (map (fun x : Z => table_lookup_precomputed x (f x)) l)) as Q.
+          unfold table_lookup, table_lookup_precomputed, table_entry_precomputed.
+          case_eq (Z.testbit (f a) (t - 1)); intros; symmetry;
+            [ apply addP'_negP'_addP_negP | apply addP'_addP ].
+        + inversion H; auto.
+        + inversion H0; auto.
+    Qed.
 
     (* -------------------- *)
     (* table_comb *)
@@ -1062,17 +1194,16 @@ Section TableMult.
     Proof.
       intros.
       unfold table_comb.
-      assert (rewrite_map: map (fun x : Z => table_lookup x (extract_bits (offset + x * s * t) e))
-                (Zseq 0 n) = map (fun x : Z => PtoP' (ZtoP (eval (entry x offset) e))) (Zseq 0 n)). {
-        apply map_ext_in.
-        intros.
-        apply table_lookup_spec; apply Zseq_bound in H0; lia.
-      }
-      rewrite rewrite_map.
-      rewrite <- fold_right_map' with (fT := addP); [ | trivial].
+      rewrite table_lookup_precomputed_spec.
+      all: cycle 1.
+      { rewrite Forall_forall; apply Zseq_bound; lia. }
+      { rewrite Forall_forall; intros; apply Zseq_bound in H0; [ apply extract_bits_bound | lia ]. }
+      erewrite fold_right_eq' with (f' := fun x => ZtoP (eval (entry x offset) e)) (eqU' := eqP);
+        [ | assumption | assumption | apply Proper_addP | 
+            rewrite Forall_forall; intros;
+            apply table_lookup_spec; apply Zseq_bound in H0; lia ].
       rewrite fold_right_addP.
-      f_equal.
-      f_equal.
+      unfold ZtoP; apply Proper_mulP; [ | reflexivity].
       rewrite comb_entry.
       rewrite <- fold_right_flat_map.
       rewrite fold_right_map with (t := []) (fT := add) (TtoU := fun x => eval x e).
@@ -1095,16 +1226,16 @@ Section TableMult.
                 (map (fun x : Z => table_comb x e) (Zseq 0 s)) =
               fold_right (fun x y : P => addP x (doubleP y)) O
                 (map (fun x : Z => ZtoP (eval (comb x) e)) (Zseq 0 s))).
-      { f_equal.
-        apply map_ext_in.
+      { apply fold_right_eq' with (eqU' := eqP);
+          [ assumption | assumption | apply Proper_addP_doubleP | ].
+        apply Forall_forall.
         intros.
         pose proof Zseq_bound s Hs.
         apply H0 in H.
         apply table_comb_spec; assumption. }
       rewrite rewrite_map.
-      rewrite fold_right_addP_shiftP.
-      unfold ZtoP.
-      f_equal.
+      rewrite fold_right_addP_doubleP.
+      unfold ZtoP; apply Proper_mulP; [ | reflexivity].
       eapply fold_right_map_cond with (TtoU := fun st : state => eval st e) (val := valid).
       - intros.
         rewrite eval_add.
@@ -1127,7 +1258,8 @@ Section TableMult.
     Theorem table_multicomb_correct: forall e : Z,
       - 2 ^ D < e < 2 ^ D -> Zodd e -> table_multicomb e = ZtoP e.
     Proof.
-      intros. rewrite table_multicomb_spec. f_equal.
+      intros. rewrite table_multicomb_spec.
+      unfold ZtoP; apply Proper_mulP; [ | reflexivity].
       apply multicomb_correct; assumption.
     Qed.
 
@@ -1172,7 +1304,7 @@ Section TableMult.
 
     Definition table_comb_positify (offset: Z) (e: Z) : P
     := List.fold_right addP' O
-    (List.map (fun x => table_lookup x (extract_bits_positify (offset + x * s * t) e)) (Zseq 0 n)).
+    (List.map (fun x => table_lookup_precomputed x (extract_bits_positify (offset + x * s * t) e)) (Zseq 0 n)).
 
     (* This is the definition used at runtime! *)
     Definition table_multicomb_positify (e: Z) : P :=
@@ -1230,7 +1362,7 @@ Section TableMult.
         rewrite Z.mod_mod; lia.
     Qed.
     
-    Lemma ZtoP_oddify: forall (e : Z), ZtoP (oddify (e mod q)) = ZtoP e.
+    Lemma ZtoP_oddify: forall (e : Z), (ZtoP (oddify (e mod q)) = ZtoP e)%P.
     Proof.
       intros.
       assert ((oddify (e mod q) - e) mod q = 0). {
@@ -1252,12 +1384,12 @@ Section TableMult.
       rewrite <- mulP_mulP.
       rewrite Z.mul_0_r.
       rewrite <- mulP_addP.
-      f_equal.
-      lia.
+      apply Proper_mulP; [ lia | reflexivity ].
+
     Qed.
 
     Theorem table_multicomb_oddify_correct: forall e : Z,
-      table_multicomb (oddify (e mod q)) = ZtoP e.
+      (table_multicomb (oddify (e mod q)) = ZtoP e)%P.
     Proof.
       intros. rewrite table_multicomb_correct.
       - apply ZtoP_oddify.
@@ -1320,30 +1452,36 @@ Section TableMult.
     Qed.
 
     Lemma table_comb_positify_spec: forall offset e,
-      table_comb_positify offset e = table_comb offset (oddify (e mod q)).
+      (table_comb_positify offset e = table_comb offset (oddify (e mod q)))%P.
     Proof.
       intros.
       unfold table_comb, table_comb_positify.
-      f_equal.
-      apply map_ext_in.
-      intros.
-      f_equal.
-      apply extract_bits_positify_spec.
+      repeat rewrite table_lookup_precomputed_spec; [ | rewrite Forall_forall .. ].
+      - apply fold_right_eq' with (eqU' := eqP);
+          [ assumption | assumption | apply Proper_addP | ].
+        rewrite Forall_forall; intros.
+        rewrite extract_bits_positify_spec.
+        reflexivity.
+      - apply Zseq_bound; lia.
+      - intros. apply extract_bits_bound.
+      - apply Zseq_bound; lia.
+      - intros. rewrite extract_bits_positify_spec. apply extract_bits_bound.
     Qed.
 
     Lemma table_multicomb_positify_spec: forall e,
-      table_multicomb_positify e = table_multicomb (oddify (e mod q)).
+      (table_multicomb_positify e = table_multicomb (oddify (e mod q)))%P.
     Proof.
       intros.
       unfold table_multicomb, table_multicomb_positify.
-      f_equal.
-      apply map_ext_in.
+      apply fold_right_eq' with (eqU' := eqP);
+        [ assumption | assumption | apply Proper_addP_doubleP | ].
+      rewrite Forall_forall.
       intros.
       apply table_comb_positify_spec.
     Qed.
 
     Lemma table_multicomb_positify_correct: forall e,
-      table_multicomb_positify e = ZtoP e.
+      (table_multicomb_positify e = ZtoP e)%P.
     Proof.
       intros.
       rewrite table_multicomb_positify_spec.
