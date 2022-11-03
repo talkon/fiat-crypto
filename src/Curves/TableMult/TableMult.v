@@ -749,7 +749,12 @@ Section TableMult.
 
   Context (P : Type)
           (eqP : P -> P -> Prop)
-          (Equivalence_eqP : RelationClasses.Equivalence eqP).
+          (addP : P -> P -> P)
+          (doubleP : P -> P)
+          (negP : P -> P)
+          (O : P) (* zero element *)
+          (groupP : @Algebra.Hierarchy.group P eqP addP O negP)
+          (doubleP_addP : forall Q, eqP (doubleP Q) (addP Q Q)).
 
   Declare Scope eq_scope.
   Local Infix "=" := Logic.eq : eq_scope.
@@ -760,14 +765,13 @@ Section TableMult.
   Delimit Scope P_scope with P.
   Bind Scope P_scope with P.
 
-  Context (addP : P -> P -> P)
-          (doubleP : P -> P)
-          (negP : P -> P)
-          (O : P) (* zero element *)
-          (groupP : @Algebra.Hierarchy.group P eqP addP O negP)
-          (doubleP_addP : forall Q, (doubleP Q = addP Q Q)%P).
+  Section Group.
+      
+    (* ======================================== *)
+    (* Properties of the group P *)
 
-  Section GroupRelations.
+    Lemma Equivalence_eqP: RelationClasses.Equivalence eqP.
+    Proof. apply (@monoid_Equivalence P eqP addP O (@group_monoid P eqP addP O negP groupP)). Qed.
 
     Local Infix "=" := eqP : type_scope. 
 
@@ -811,78 +815,69 @@ Section TableMult.
     Lemma eq_eqP : forall Q R, Logic.eq Q R -> Q = R.
     Proof. intros. rewrite H. reflexivity. Qed.
 
-  End GroupRelations.
+  End Group.
 
   Context (B : P) (* base point *)
-          (P' : Type)
+          (P' : Type) (* type of points in precomputed table *)
           (PtoP' : P -> P')
           (addP' : P' -> P -> P)
           (negP' : P' -> P')
-          (addP'_addP: forall Q R, (addP Q R = addP' (PtoP' Q) R)%P)
-          (addP'_negP'_addP_negP: forall Q R, (addP (negP Q) R = addP' (negP' (PtoP' Q)) R)%P).
-          (*(negP'_negP: forall Q, (negP' (PtoP' Q) = PtoP' (negP Q))%eq).*)
+          (table' : Z -> Z -> P'). (* precomputed table *)
 
-  Section Table.
+  Section TableDefinitions.
 
     (* ======================================== *)
     (* Definitions related to tables *)
 
-    (*
-                    1  0    0  1 = 9
+    (*               1  0    0  1 = 9
       Table: c =  [+1; -1; -1; +1], offset |-> sum (c[i] * 2^(i*k))
           should be equal to eval (comb s t offset) e * P,
           where the c is the bits in the respective positions of e
     *)
+
     Definition ZtoP (n : Z) : P := mulP n B.
 
-    (* To be replaced by looking up in an actual precomputed table *)
-    Definition table_entry (bnum: Z) (d: Z) : P
+    (* "Correct" tables *)
+
+    Definition table (bnum: Z) (d: Z) : P
       := List.fold_right addP O
       (List.map
         (fun x => ZtoP ((2 * (Z.b2z (Z.testbit d (x - t * bnum))) - 1) * 2 ^ (s * x)))
         (Zseq (t * bnum) t)).
-
-    Definition table_entry' (bnum: Z) (d: Z) : P
-      := List.fold_right addP O
-      (List.map
-        (fun x => ZtoP ((2 * (Z.b2z (Z.testbit d (x - t * bnum))) - 1) * 2 ^ (s * x)))
-        (Zseq (t * bnum) t)).
-
-    Lemma table_entry_hyp: forall bnum d : Z,
-      0 <= d < 2 ^ (t - 1) ->
-      (table_entry bnum d = table_entry' bnum d)%P.
-    Proof. intros. reflexivity. Qed.
-
-    Opaque table_entry.
 
     Definition table_lookup (bnum: Z) (d: Z) : P
       := if Z.testbit d (t - 1)
-         then negP (table_entry bnum (2 ^ t - 1 - d))
-         else table_entry bnum d.
+         then negP (table bnum (2 ^ t - 1 - d))
+         else table bnum d.
 
-    Definition table_entry_precomputed (bnum: Z) (d: Z) : P'
-      := PtoP' (table_entry bnum d).
+    (* Definitions using table'  *)
 
-    Definition table_lookup_precomputed (bnum: Z) (d: Z) : P' 
+    Definition table_lookup' (bnum: Z) (d: Z) : P'
       := if Z.testbit d (t - 1)
-         then negP' (table_entry_precomputed bnum (2 ^ t - 1 - d))
-         else table_entry_precomputed bnum d.
-
-    (* Definition table := List.map table_entry (Zseq 0 (2 ^ t)). *)
+         then negP' (table' bnum (2 ^ t - 1 - d))
+         else table' bnum d.
 
     Definition extract_bits (offset: Z) (e: Z) : Z
       := List.fold_right Z.add 0 (
       List.map (fun x => (sbit' e (x * s + offset)) * (2 ^ x))
       (Zseq 0 t)).
 
-    Print List.fold_right.
-
     Definition table_comb (offset: Z) (e: Z) : P
       := List.fold_right addP' O
-      (List.map (fun x => table_lookup_precomputed x (extract_bits (offset + x * s * t) e)) (Zseq 0 n)).
+      (List.map (fun x => table_lookup' x (extract_bits (offset + x * s * t) e)) (Zseq 0 n)).
 
     Definition table_multicomb (e: Z) : P :=
       List.fold_right (fun x y => addP x (doubleP y)) O (List.map (fun x => table_comb x e) (Zseq 0 s)).
+
+  End TableDefinitions.
+
+  Context (table'_spec : forall bnum d : Z, 0 <= d < 2 ^ (t - 1) 
+            -> exists Q : P, (Q = table bnum d)%P
+              /\ (PtoP' Q = table' bnum d)%eq)
+          (addP'_addP: forall Q R, (addP' (PtoP' Q) R = addP Q R)%P)
+          (addP'_negP'_addP_negP: forall Q R, (addP' (negP' (PtoP' Q)) R = addP (negP Q) R)%P).
+
+  Section TableProofs.
 
     (* ==================== *)
     (* Lemmas and theorems *)
@@ -987,7 +982,7 @@ Section TableMult.
       ZtoP (fold_right Z.add 0 (map f l)))%P.
     Proof.
       intros. eapply fold_right_map_eq with (T := Z).
-      - assumption.
+      - apply Equivalence_eqP.
       - apply Proper_addP.
       - intros. unfold ZtoP. symmetry. apply mulP_addP.
       - apply mulP_zero.
@@ -998,22 +993,22 @@ Section TableMult.
       ZtoP (fold_right (fun x y : Z => Z.add x (Z.double y)) 0 (map f l)))%P.
     Proof.
       intros. eapply fold_right_map_eq with (T := Z).
-      - assumption.
+      - apply Equivalence_eqP.
       - cbv. intros. repeat rewrite doubleP_addP. rewrite H, H0. reflexivity.
       - intros. unfold ZtoP. rewrite mulP_addP. rewrite mulP_doubleP. reflexivity.
       - apply mulP_zero.
     Qed.
 
     (* -------------------- *)
-    (* table_lookup_precomputed *)
+    (* table_lookup' *)
 
-    Lemma table_entry'_spec: forall bnum offset e : Z,
+    Lemma table_spec: forall bnum offset e : Z,
       0 <= bnum < n -> 0 <= offset < s
-        -> (table_entry' bnum (extract_bits (offset + bnum * s * t) e)
+        -> (table bnum (extract_bits (offset + bnum * s * t) e)
              = ZtoP (eval (entry bnum offset) e))%P.
     Proof.
       intros.
-      unfold eval, entry, table_entry'.
+      unfold eval, entry, table.
       f_equal.
       rewrite fold_right_addP.
       rewrite map_map.
@@ -1038,7 +1033,6 @@ Section TableMult.
       replace (s * (a' + t * bnum) + offset) with (s * a' + (offset + bnum * s * t)) by nia.
       eapply extract_bits_spec; assert (0 < s * t) by nia; nia.
     Qed.
-
 
     Lemma testbit_flip: forall d t' b : Z,
       0 <= d < 2 ^ t' -> 0 <= b < t'
@@ -1098,16 +1092,16 @@ Section TableMult.
 
     Local Infix "=" := eqP : type_scope.
 
-    Lemma table_entry'_flip: forall bnum d : Z,
+    Lemma table_flip: forall bnum d : Z,
       0 <= d < 2 ^ t -> 0 <= bnum
-        -> (table_entry' bnum (2 ^ t - 1 - d) = negP (table_entry' bnum d))%P.
+        -> (table bnum (2 ^ t - 1 - d) = negP (table bnum d))%P.
     Proof.
       intros.
-      unfold table_entry'.
+      unfold table.
       erewrite <- fold_right_map_cond_eq with (fT := addP) (fU := addP) (TtoU := negP) (u := O) (eqU := eqP) (val := fun P => exists n, (ZtoP n = P)%P).
       - apply fold_right_eq' with (eqU' := eqP).
-        + assumption.
-        + assumption.
+        + apply Equivalence_eqP.
+        + apply Equivalence_eqP.
         + apply Proper_addP.
         + apply Forall_forall. intros.
           unfold ZtoP.
@@ -1115,7 +1109,7 @@ Section TableMult.
           apply Proper_mulP; [ | reflexivity].
           apply Zseq_bound' in H1; try lia.
           rewrite b2z_testbit_flip; try lia.
-      - assumption.
+      - apply Equivalence_eqP.
       - apply Proper_addP.
       - intros. destruct H1. destruct H2.
         rewrite <- H1, <- H2.
@@ -1150,9 +1144,8 @@ Section TableMult.
         rewrite Z.leb_le in H2.
         replace (2 ^ t) with (2 ^ (t - 1) + 2 ^ (t - 1)) in *;
           [ | replace t with (t - 1 + 1) at 3 by lia; rewrite Z.pow_add_r; nia ].
-        rewrite table_entry_hyp by lia.
-        rewrite <- table_entry'_flip.
-        + rewrite <- table_entry'_spec by lia.
+        rewrite <- table_flip.
+        + rewrite <- table_spec by lia.
           remember (extract_bits (offset + bnum * s * t) e) as bits.
           assert ((2 ^ t - 1 - (2 ^ (t - 1) + 2 ^ (t - 1) - 1 - bits) = bits)%eq).
           replace (2 ^ t) with (2 ^ (t - 1) + 2 ^ (t - 1));
@@ -1164,26 +1157,47 @@ Section TableMult.
         + lia.
       - symmetry in H2.
         rewrite Z.leb_gt in H2.
-        rewrite table_entry_hyp by lia.
-        apply table_entry'_spec; assumption.
+        apply table_spec; assumption.
     Qed.
 
-    Lemma table_lookup_precomputed_spec: forall (f : Z -> Z) (l : list Z),
+    Lemma table_lookuq_spec: forall (f : Z -> Z) (l : list Z),
       List.Forall (fun x => 0 <= x < n) l ->
       List.Forall (fun x => 0 <= f x < 2 ^ t) l ->
-      fold_right addP' O (map (fun x : Z => table_lookup_precomputed x (f x)) l)
+      fold_right addP' O (map (fun x : Z => table_lookup' x (f x)) l)
       = fold_right addP O (map (fun x : Z => table_lookup x (f x)) l).
     Proof.
       intros.
       induction l.
       - simpl. reflexivity.
-      - simpl. rewrite <- IHl.
-        + remember (fold_right addP' O (map (fun x : Z => table_lookup_precomputed x (f x)) l)) as Q.
-          unfold table_lookup, table_lookup_precomputed, table_entry_precomputed.
-          case_eq (Z.testbit (f a) (t - 1)); intros; symmetry;
-            [ apply addP'_negP'_addP_negP | apply addP'_addP ].
-        + inversion H; auto.
-        + inversion H0; auto.
+      - simpl. rewrite <- IHl; [ | inversion H | inversion H0 ]; auto.
+        remember (fold_right addP' O (map (fun x : Z => table_lookup' x (f x)) l)) as Q.
+        unfold table_lookup', table_lookup.
+        case_eq (Z.testbit (f a) (t - 1)); intros.
+        + assert (0 <= 2 ^ t - 1 - f a < 2 ^ (t - 1)).
+          { inversion H0.
+            split. lia.
+            apply Z.leb_gt.
+            rewrite <- testbit_top_bit by lia.
+            replace (f a) with (2 ^ t - 1 - (2 ^ t - 1 - f a)) in H1 by lia.
+            rewrite testbit_flip in H1 by lia.
+            rewrite Bool.negb_true_iff in H1.
+            apply H1. }
+          pose proof table'_spec a (2 ^ t - 1 - f a) H2.
+          repeat destruct H3.
+          rewrite <- H4.
+          rewrite <- H3.
+          apply addP'_negP'_addP_negP.
+        + assert (0 <= f a < 2 ^ (t - 1)).
+          { inversion H0.
+            split. lia.
+            apply Z.leb_gt.
+            rewrite <- testbit_top_bit by lia.
+            apply H1. }
+          pose proof table'_spec a (f a) H2.
+          repeat destruct H3.
+          rewrite <- H4.
+          rewrite <- H3.
+          apply addP'_addP.
     Qed.
 
     (* -------------------- *)
@@ -1194,12 +1208,12 @@ Section TableMult.
     Proof.
       intros.
       unfold table_comb.
-      rewrite table_lookup_precomputed_spec.
+      rewrite table_lookuq_spec.
       all: cycle 1.
       { rewrite Forall_forall; apply Zseq_bound; lia. }
       { rewrite Forall_forall; intros; apply Zseq_bound in H0; [ apply extract_bits_bound | lia ]. }
       erewrite fold_right_eq' with (f' := fun x => ZtoP (eval (entry x offset) e)) (eqU' := eqP);
-        [ | assumption | assumption | apply Proper_addP | 
+        [ | apply Equivalence_eqP | apply Equivalence_eqP | apply Proper_addP | 
             rewrite Forall_forall; intros;
             apply table_lookup_spec; apply Zseq_bound in H0; lia ].
       rewrite fold_right_addP.
@@ -1227,7 +1241,7 @@ Section TableMult.
               fold_right (fun x y : P => addP x (doubleP y)) O
                 (map (fun x : Z => ZtoP (eval (comb x) e)) (Zseq 0 s))).
       { apply fold_right_eq' with (eqU' := eqP);
-          [ assumption | assumption | apply Proper_addP_doubleP | ].
+          [ apply Equivalence_eqP | apply Equivalence_eqP | apply Proper_addP_doubleP | ].
         apply Forall_forall.
         intros.
         pose proof Zseq_bound s Hs.
@@ -1263,7 +1277,7 @@ Section TableMult.
       apply multicomb_correct; assumption.
     Qed.
 
-  End Table.
+  End TableProofs.
 
   Context (q : Z) (* order of B *)
           (odd_q : Zodd q) (mulP_q : mulP q B = O)
@@ -1282,21 +1296,6 @@ Section TableMult.
       else, we compute 2 ^ (D - 1) + (oddify (e mod q) >> 1).
     *)
 
-    (*
-    Definition positify' (e: Z) : Z :=
-     let e := e mod q in 
-     if Z.odd e then
-       2 ^ (D - 1) + (e >> 1)
-     else
-      ((2 ^ D - 1) - (q - e)) >> 1.
-
-    Definition positify'' (e: Z) : Z :=
-     let e := e mod q in
-     let o := 2 ^ D - 1 + e in
-     let i := if Z.odd e then o else o - q in
-     Z.shiftr i 1.
-     *)
-
     Definition extract_bits_positify (offset: Z) (e: Z) : Z
     := List.fold_right Z.add 0 (
     List.map (fun x => Z.b2z (Z.testbit (positify e) (x * s + offset)) * (2 ^ x))
@@ -1304,19 +1303,11 @@ Section TableMult.
 
     Definition table_comb_positify (offset: Z) (e: Z) : P
     := List.fold_right addP' O
-    (List.map (fun x => table_lookup_precomputed x (extract_bits_positify (offset + x * s * t) e)) (Zseq 0 n)).
+    (List.map (fun x => table_lookup' x (extract_bits_positify (offset + x * s * t) e)) (Zseq 0 n)).
 
     (* This is the definition used at runtime! *)
     Definition table_multicomb_positify (e: Z) : P :=
     List.fold_right (fun x y => addP x (doubleP y)) O (List.map (fun x => table_comb_positify x e) (Zseq 0 s)).
-
-    (* Evenify has been replaced by positify *)
-    (* 
-    Definition evenify (e: Z) : Z := if Z.odd e then e + q else e.
-
-    Definition sbit_evenify (e: Z) (x: Z) := 2 * Z.b2z (Z.testbit (evenify (e + 2 ^ D - 1) / 2) x) - 1.
-    Definition sbit'_evenify (e: Z) (x: Z) := Z.b2z (Z.testbit (evenify (e + 2 ^ D - 1) / 2) x).
-    *)
 
     (* ==================== *)
     (* Lemmas and theorems *)
@@ -1398,31 +1389,6 @@ Section TableMult.
     Qed.
 
     (* -------------------- *)
-    (* evenify *)
-
-    (*
-    Lemma oddify_evenify: forall e, 0 <= e < q ->
-    exists f, f mod q = (oddify e) mod q /\
-    (f + 2 ^ D - 1) / 2 = evenify (e + 2 ^ D - 1) / 2.
-    Proof.
-      intros.
-      unfold oddify, evenify.
-      f_equal.
-      case_eq (Z.odd e); intros.
-      - replace (Z.odd (e + 2 ^ D - 1)) with false.
-        exists e.
-        auto.
-        admit.
-      - replace (Z.odd (e + 2 ^ D - 1)) with true by admit.
-        exists (e + q).
-        split.
-        admit.
-        f_equal.
-        lia.
-    Admitted.
-    *) 
-
-    (* -------------------- *)
     (* positify *)
 
     Lemma positify_spec: forall e, 0 <= positify e < 2 ^ D.
@@ -1456,9 +1422,9 @@ Section TableMult.
     Proof.
       intros.
       unfold table_comb, table_comb_positify.
-      repeat rewrite table_lookup_precomputed_spec; [ | rewrite Forall_forall .. ].
+      repeat rewrite table_lookuq_spec; [ | rewrite Forall_forall .. ].
       - apply fold_right_eq' with (eqU' := eqP);
-          [ assumption | assumption | apply Proper_addP | ].
+          [ apply Equivalence_eqP | apply Equivalence_eqP | apply Proper_addP | ].
         rewrite Forall_forall; intros.
         rewrite extract_bits_positify_spec.
         reflexivity.
@@ -1474,7 +1440,7 @@ Section TableMult.
       intros.
       unfold table_multicomb, table_multicomb_positify.
       apply fold_right_eq' with (eqU' := eqP);
-        [ assumption | assumption | apply Proper_addP_doubleP | ].
+        [ apply Equivalence_eqP | apply Equivalence_eqP | apply Proper_addP_doubleP | ].
       rewrite Forall_forall.
       intros.
       apply table_comb_positify_spec.
@@ -1491,6 +1457,3 @@ Section TableMult.
   End Oddify.
 
 End TableMult.
-
-Print Transparent Dependencies table_multicomb_positify.
-
